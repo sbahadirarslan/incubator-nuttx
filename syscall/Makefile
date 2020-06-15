@@ -41,6 +41,9 @@ include stubs/Make.defs
 MKSYSCALL = "$(TOPDIR)$(DELIM)tools$(DELIM)mksyscall$(HOSTEXEEXT)"
 CSVFILE = "$(TOPDIR)$(DELIM)syscall$(DELIM)syscall.csv"
 
+ifeq ($(CONFIG_SCHED_INSTRUMENTATION_SYSCALL),y)
+PROXY_SRCS += syscall_name.c
+endif
 STUB_SRCS += syscall_funclookup.c syscall_stublookup.c syscall_nparms.c
 
 AOBJS = $(ASRCS:.S=$(OBJEXT))
