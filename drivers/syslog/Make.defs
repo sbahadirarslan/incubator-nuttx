@@ -55,6 +55,10 @@ ifeq ($(CONFIG_DRIVER_NOTE),y)
   CSRCS += note_driver.c
 endif
 
+ifeq ($(CONFIG_DRIVER_TRACER),y)
+  CSRCS += tracer_driver.c
+endif
+
 # The RAMLOG device is usable as a system logging device or standalone
 
 ifeq ($(CONFIG_RAMLOG),y)
