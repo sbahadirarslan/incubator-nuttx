@@ -66,6 +66,19 @@ else
   NUTTX = "$(TOPDIR)$(DELIM)nuttx$(EXEEXT)"
 endif
 
+# Additional rules for system call wrapper
+
+ifeq ($(CONFIG_BUILD_FLAT),y)
+ifeq ($(CONFIG_SCHED_INSTRUMENTATION_SYSCALL),y)
+  SYSCALLLIST = $(TOPDIR)/syscall/syscall_list.txt
+  SYSCALLLIST_LDCMD = $(SYSCALLLIST:.txt=.ldcmd)
+  EXTRALINKCMDS += @$(SYSCALLLIST_LDCMD)
+
+$(SYSCALLLIST_LDCMD): $(SYSCALLLIST)
+	cat $< | sed -e 's/^/--wrap=/' > $@
+endif
+endif
+
 # The "head" object
 
 HEAD_OBJ = $(HEAD_ASRC:.S=$(OBJEXT))
@@ -96,7 +109,7 @@ UOBJS = $(UAOBJS) $(UCOBJS)
 KBIN = libkarch$(LIBEXT)
 BIN  = libarch$(LIBEXT)
 
-LDFLAGS += $(ARCHSCRIPT)
+LDFLAGS += $(ARCHSCRIPT) $(EXTRALINKCMDS)
 
 LDSTARTGROUP ?= --start-group
 LDENDGROUP ?= --end-group
@@ -154,7 +167,7 @@ $(KBIN): $(OBJS)
 board/libboard$(LIBEXT):
 	$(Q) $(MAKE) -C board TOPDIR="$(TOPDIR)" libboard$(LIBEXT) EXTRAFLAGS="$(EXTRAFLAGS)"
 
-nuttx$(EXEEXT): $(HEAD_OBJ) board/libboard$(LIBEXT)
+nuttx$(EXEEXT): $(HEAD_OBJ) board/libboard$(LIBEXT) $(SYSCALLLIST_LDCMD)
 	$(Q) echo "LD: nuttx"
 	$(Q) $(LD) --entry=__start $(LDFLAGS) $(LIBPATHS) $(EXTRA_LIBPATHS) \
 		-o $(NUTTX) $(HEAD_OBJ) $(EXTRA_OBJS) \
