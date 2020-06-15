@@ -749,6 +749,10 @@ struct tcb_s
 #if CONFIG_TASK_NAME_SIZE > 0
   char name[CONFIG_TASK_NAME_SIZE + 1];  /* Task name (with NUL terminator)     */
 #endif
+
+#ifdef CONFIG_SCHED_INSTRUMENTATION_SYSCALL
+  int syscall_nest;                      /* Syscall nest level */
+#endif
 };
 
 /* struct task_tcb_s ************************************************************/

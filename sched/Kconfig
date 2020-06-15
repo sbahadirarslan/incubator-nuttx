@@ -1044,6 +1044,32 @@ config SCHED_NOTE_GET
 		the note buffer in order to remove one entry.
 
 endif # SCHED_INSTRUMENTATION_BUFFER
+
+config SCHED_INSTRUMENTATION_TRACER
+	bool "Scheduler tracer"
+	---help---
+		Enables NuttX task tracer support.
+		See include/nuttx/sched_tracer.h for additional information.
+
+if SCHED_INSTRUMENTATION_TRACER
+
+config SCHED_TRACER_BUFSIZE
+	int "Task trace buffer size"
+	default 4096
+	---help---
+		The size of the in-memory, circular task trace buffer (in bytes).
+
+if TASK_NAME_SIZE > 0
+
+config SCHED_TRACER_TASKNAME_BUFSIZE
+	int "Task trace name buffer size"
+	default 128
+	---help---
+		The size of the in-memory task name buffer (in bytes).
+
+endif # TASK_NAME_SIZE > 0
+
+endif # SCHED_INSTRUMENTATION_TRACER
 endif # SCHED_INSTRUMENTATION
 endmenu # Performance Monitoring
 
