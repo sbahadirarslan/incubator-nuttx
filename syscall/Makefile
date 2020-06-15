@@ -37,12 +37,14 @@ include $(TOPDIR)/Make.defs
 
 include proxies/Make.defs
 include stubs/Make.defs
+include wraps/Make.defs
 
 MKSYSCALL = "$(TOPDIR)$(DELIM)tools$(DELIM)mksyscall$(HOSTEXEEXT)"
 CSVFILE = "$(TOPDIR)$(DELIM)syscall$(DELIM)syscall.csv"
 
 ifeq ($(CONFIG_SCHED_INSTRUMENTATION_SYSCALL),y)
 PROXY_SRCS += syscall_name.c
+WRAP_SRCS += syscall_name.c
 endif
 STUB_SRCS += syscall_funclookup.c syscall_stublookup.c syscall_nparms.c
 
@@ -50,8 +52,9 @@ AOBJS = $(ASRCS:.S=$(OBJEXT))
 
 PROXY_OBJS = $(PROXY_SRCS:.c=$(OBJEXT))
 STUB_OBJS = $(STUB_SRCS:.c=$(OBJEXT))
+WRAP_OBJS = $(WRAP_SRCS:.c=$(OBJEXT))
 
-CSRCS = $(PROXY_SRCS) $(STUB_SRCS)
+CSRCS = $(sort $(PROXY_SRCS) $(STUB_SRCS) $(WRAP_SRCS))
 COBJS = $(CSRCS:.c=$(OBJEXT))
 
 SRCS = $(ASRCS) $(CSRCS)
@@ -59,12 +62,16 @@ OBJS = $(AOBJS) $(COBJS)
 
 PROXYDEPPATH = --dep-path proxies
 STUBDEPPATH = --dep-path stubs
-VPATH = proxies:stubs
+WRAPDEPPATH = --dep-path wraps
+VPATH = proxies:stubs:wraps
 
 BIN1 = libproxies$(LIBEXT)
 BIN2 = libstubs$(LIBEXT)
+BIN3 = libwraps$(LIBEXT)
+SYSCALLLIST = syscall_list.txt
+SYSCALLLIST_TMP = $(SYSCALLLIST:.txt=.tmp)
 
-all: $(BIN1) $(BIN2)
+all: $(BIN1) $(BIN2) $(BIN3) $(SYSCALLLIST)
 .PHONY: context depend clean distclean
 
 $(AOBJS): %$(OBJEXT): %.S
@@ -79,8 +86,13 @@ $(BIN1): $(PROXY_OBJS)
 $(BIN2): $(STUB_OBJS)
 	$(call ARCHIVE, $@, $(STUB_OBJS))
 
+$(BIN3): $(WRAP_OBJS)
+	$(call ARCHIVE, $@, $(WRAP_OBJS))
+
+$(SYSCALLIST): .context
+
 .depend: Makefile $(SRCS)
-	$(Q) $(MKDEP) $(PROXYDEPPATH) $(STUBDEPPATH) \
+	$(Q) $(MKDEP) $(PROXYDEPPATH) $(STUBDEPPATH) $(WRAPDEPPATH) \
 	  "$(CC)" -- $(CFLAGS) -- $(SRCS) >Make.dep
 	$(Q) touch $@
 
@@ -88,8 +100,15 @@ depend: .depend
 
 .context: syscall.csv
 	$(Q) $(MAKE) -C $(TOPDIR)$(DELIM)tools -f Makefile.host mksyscall
+ifeq ($(CONFIG_LIB_SYSCALL),y)
 	$(Q) (cd proxies; $(MKSYSCALL) -p $(CSVFILE);)
 	$(Q) (cd stubs; $(MKSYSCALL) -s $(CSVFILE);)
+else
+	$(Q) (cd wraps; $(MKSYSCALL) -w $(CSVFILE);)
+	$(Q) $(MKSYSCALL) -l $(CSVFILE) > $(SYSCALLLIST:.txt=.h)
+	$(Q) $(call PREPROCESS, $(SYSCALLLIST:.txt=.h), $(SYSCALLLIST_TMP))
+	$(Q) cat $(SYSCALLLIST_TMP) | sed -n -e '/^[^#]/p' > $(SYSCALLLIST)
+endif
 	$(Q) touch $@
 
 context: .context
@@ -97,9 +116,11 @@ context: .context
 clean:
 	$(call DELFILE, $(BIN1))
 	$(call DELFILE, $(BIN2))
+	$(call DELFILE, $(BIN3))
 ifneq ($(OBJEXT),)
 	$(call DELFILE, proxies$(DELIM)*$(OBJEXT))
 	$(call DELFILE, stubs$(DELIM)*$(OBJEXT))
+	$(call DELFILE, wraps$(DELIM)*$(OBJEXT))
 endif
 	$(call CLEAN)
 
@@ -109,5 +130,7 @@ distclean: clean
 	$(call DELFILE, .depend)
 	$(call DELFILE, proxies$(DELIM)*.c)
 	$(call DELFILE, stubs$(DELIM)*.c)
+	$(call DELFILE, wraps$(DELIM)*.c)
+	$(call DELFILE, $(basename $(SYSCALLLIST)).*)
 
 -include Make.dep

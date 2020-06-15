@@ -148,6 +148,12 @@ syscall$(DELIM)libstubs$(LIBEXT): pass2dep
 staging$(DELIM)libstubs$(LIBEXT): syscall$(DELIM)libstubs$(LIBEXT)
 	$(Q) $(call INSTALL_LIB,$<,$@)
 
+syscall$(DELIM)libwraps$(LIBEXT): context
+	$(Q) $(MAKE) -C syscall TOPDIR="$(TOPDIR)" libwraps$(LIBEXT)
+
+staging$(DELIM)libwraps$(LIBEXT): syscall$(DELIM)libwraps$(LIBEXT)
+	$(Q) $(call INSTALL_LIB,$<,$@)
+
 # Special case
 
 ifeq ($(CONFIG_BUILD_FLAT),y)

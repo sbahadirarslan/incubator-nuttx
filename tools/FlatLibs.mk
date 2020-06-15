@@ -60,6 +60,10 @@ NUTTXLIBS += staging$(DELIM)libarch$(LIBEXT)
 ifeq ($(CONFIG_LIB_SYSCALL),y)
 NUTTXLIBS += staging$(DELIM)libstubs$(LIBEXT)
 USERLIBS  += staging$(DELIM)libproxies$(LIBEXT)
+else
+ifeq ($(CONFIG_SCHED_INSTRUMENTATION_SYSCALL),y)
+NUTTXLIBS += staging$(DELIM)libwraps$(LIBEXT)
+endif
 endif
 
 # Add libraries for two pass build support.  The special directory pass1
