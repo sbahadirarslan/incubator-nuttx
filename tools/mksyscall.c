@@ -416,6 +416,8 @@ static void generate_stub(int nfixed, int nparms)
   fprintf(stream, "/* Auto-generated %s stub file -- do not edit */\n\n",
           g_parm[0]);
   fprintf(stream, "#include <nuttx/config.h>\n");
+  fprintf(stream, "#include <nuttx/sched_note.h>\n");
+  fprintf(stream, "#include <syscall.h>\n");
   fprintf(stream, "#include <stdint.h>\n");
 
   if (g_parm[HEADER_INDEX] && strlen(g_parm[HEADER_INDEX]) > 0)
@@ -450,6 +452,27 @@ static void generate_stub(int nfixed, int nparms)
 
   fprintf(stream, ")\n{\n");
 
+  /* Generate the result variable definition for non-void function */
+
+  if (strcmp(g_parm[RETTYPE_INDEX], "void") != 0)
+    {
+      fprintf(stream, "  uintptr_t result;\n\n");
+    }
+
+  /* If needed, call system call enter hook function */
+
+  fprintf(stream, "#ifdef CONFIG_SCHED_INSTRUMENTATION_SYSCALL\n");
+  fprintf(stream, "  sched_note_syscall_enter(SYS_%s, %d",
+          g_parm[NAME_INDEX], nparms);
+
+  for (i = 0; i < nparms; i++)
+    {
+      fprintf(stream, ", parm%d", i + 1);
+    }
+
+  fprintf(stream, ");\n");
+  fprintf(stream, "#endif /* CONFIG_SCHED_INSTRUMENTATION_SYSCALL */\n\n");
+
   /* Then call the proxied function.  Functions that have no return value are
    * a special case.
    */
@@ -460,7 +483,7 @@ static void generate_stub(int nfixed, int nparms)
     }
   else
     {
-      fprintf(stream, "  return (uintptr_t)%s(", g_parm[NAME_INDEX]);
+      fprintf(stream, "  result = (uintptr_t)%s(", g_parm[NAME_INDEX]);
     }
 
   /* The pass all of the system call parameters, casting to the correct type
@@ -499,17 +522,36 @@ static void generate_stub(int nfixed, int nparms)
         }
     }
 
+  fprintf(stream, ");\n\n");
+
+  /* If needed, call system call leave hook function */
+
+  fprintf(stream, "#ifdef CONFIG_SCHED_INSTRUMENTATION_SYSCALL\n");
+  fprintf(stream, "  sched_note_syscall_leave(SYS_%s, ", g_parm[NAME_INDEX]);
+
+  if (strcmp(g_parm[RETTYPE_INDEX], "void") == 0)
+    {
+      fprintf(stream, "0");
+    }
+  else
+    {
+      fprintf(stream, "result");
+    }
+
+  fprintf(stream, ");\n");
+  fprintf(stream, "#endif /* CONFIG_SCHED_INSTRUMENTATION_SYSCALL */\n\n");
+
   /* Tail end of the function.  If the stubs function has no return
    * value, just return zero (OK).
    */
 
   if (strcmp(g_parm[RETTYPE_INDEX], "void") == 0)
     {
-      fprintf(stream, ");\n  return 0;\n}\n");
+      fprintf(stream, "  return 0;\n}\n");
     }
   else
     {
-      fprintf(stream, ");\n}\n");
+      fprintf(stream, "  return result;\n}\n");
     }
 
   if (g_parm[COND_INDEX][0] != '\0')
@@ -520,6 +562,323 @@ static void generate_stub(int nfixed, int nparms)
   stub_close(stream);
 }
 
+static FILE *open_wrapper(void)
+{
+  char filename[MAX_PARMSIZE + 8];
+  FILE *stream;
+
+  snprintf(filename, MAX_PARMSIZE + 7, "WRAP_%s.c", g_parm[NAME_INDEX]);
+  filename[MAX_PARMSIZE + 7] = '\0';
+
+  stream = fopen(filename, "w");
+
+  if (stream == NULL)
+    {
+      fprintf(stderr, "Failed to open %s: %s\n", filename, strerror(errno));
+      exit(10);
+    }
+
+  return stream;
+}
+
+static void generate_wrapper(int nfixed, int nparms)
+{
+  FILE *stream = open_wrapper();
+  char formal[MAX_PARMSIZE];
+  char actual[MAX_PARMSIZE];
+  char fieldname[MAX_PARMSIZE];
+  int i;
+
+  /* Generate "up-front" information, include correct header files */
+
+  fprintf(stream, "/* Auto-generated %s wrap file -- do not edit */\n\n",
+          g_parm[NAME_INDEX]);
+  fprintf(stream, "#include <nuttx/config.h>\n");
+  fprintf(stream, "#include <nuttx/sched_note.h>\n");
+  fprintf(stream, "#include <stdint.h>\n");
+
+  /* Suppress "'noreturn' function does return" warnings. */
+
+  fprintf(stream, "#include <nuttx/compiler.h>\n");
+  fprintf(stream, "#undef noreturn_function\n");
+  fprintf(stream, "#define noreturn_function\n");
+
+  /* Does this function have a variable number of parameters?  If so then the
+   * final parameter type will be encoded as "..."
+   */
+
+  if (nfixed != nparms)
+    {
+      fprintf(stream, "#include <stdarg.h>\n");
+    }
+
+  if (g_parm[HEADER_INDEX] && strlen(g_parm[HEADER_INDEX]) > 0)
+    {
+      fprintf(stream, "#include <%s>\n", g_parm[HEADER_INDEX]);
+    }
+
+  /* CONFIG_LIB_SYSCALL must be defined to get syscall number */
+
+  fprintf(stream, "#define CONFIG_LIB_SYSCALL\n");
+  fprintf(stream, "#include <syscall.h>\n");
+  fprintf(stream, "#undef CONFIG_LIB_SYSCALL\n\n");
+
+  if (g_parm[COND_INDEX][0] != '\0')
+    {
+      fprintf(stream, "#if %s\n\n", g_parm[COND_INDEX]);
+    }
+
+  /* Generate the wrapper function definition that matches standard function
+   * prototype
+   */
+
+  fprintf(stream, "%s __wrap_%s(", g_parm[RETTYPE_INDEX],
+          g_parm[NAME_INDEX]);
+
+  /* Generate the formal parameter list */
+
+  if (nparms <= 0)
+    {
+      fprintf(stream, "void");
+    }
+  else
+    {
+      for (i = 0; i < nfixed; i++)
+        {
+          /* The formal and actual parameter types may be encoded.. extra the
+           * formal parameter type.
+           */
+
+          get_formalparmtype(g_parm[PARM1_INDEX + i], formal);
+
+          /* Arguments after the first must be separated from the preceding
+           * parameter with a comma.
+           */
+
+          if (i > 0)
+            {
+              fprintf(stream, ", ");
+            }
+
+          print_formalparm(stream, formal, i + 1);
+        }
+    }
+
+  if (i < nparms)
+    {
+       fprintf(stream, ", ...)\n{\n");
+    }
+  else
+    {
+      fprintf(stream, ")\n{\n");
+    }
+
+  /* Generate the result variable definition for non-void function */
+
+  if (strcmp(g_parm[RETTYPE_INDEX], "void") != 0)
+    {
+      fprintf(stream, "  %s result;\n", g_parm[RETTYPE_INDEX]);
+    }
+
+  /* Generate the wrapped (real) function prototype definition */
+
+  fprintf(stream, "  %s __real_%s(", g_parm[RETTYPE_INDEX],
+          g_parm[NAME_INDEX]);
+
+  /* Generate the formal parameter list */
+
+  if (nparms <= 0)
+    {
+      fprintf(stream, "void");
+    }
+  else
+    {
+      for (i = 0; i < nfixed; i++)
+        {
+          /* The formal and actual parameter types may be encoded.. extra the
+           * formal parameter type.
+           */
+
+          get_formalparmtype(g_parm[PARM1_INDEX + i], formal);
+
+          /* Arguments after the first must be separated from the preceding
+           * parameter with a comma.
+           */
+
+          if (i > 0)
+            {
+              fprintf(stream, ", ");
+            }
+
+          fprintf(stream, "%s", formal);
+        }
+    }
+
+  /* Handle the end of the formal parameter list */
+
+  if (i < nparms)
+    {
+      fprintf(stream, ", ...);\n");
+
+      /* Get parm variables .. some from the parameter list and others from
+       * the varargs.
+       */
+
+      fprintf(stream, "  va_list ap;\n");
+      for (; i < nparms; i++)
+        {
+          get_formalparmtype(g_parm[PARM1_INDEX + i], formal);
+          fprintf(stream, "  %s parm%d;\n", formal, i + 1);
+        }
+
+      fprintf(stream, "\n  va_start(ap, parm%d);\n", nfixed);
+
+      for (i = nfixed; i < nparms; i++)
+        {
+          get_formalparmtype(g_parm[PARM1_INDEX + i], formal);
+          get_actualparmtype(g_parm[PARM1_INDEX + i], actual);
+
+          if (is_union(formal))
+            {
+              fprintf(stream, "  parm%d = (%s)va_arg(ap, %s);\n",
+                      i + 1, formal, actual);
+            }
+          else
+            {
+              fprintf(stream, "  parm%d = va_arg(ap, %s);\n", i + 1, actual);
+            }
+        }
+
+      fprintf(stream, "  va_end(ap);\n");
+    }
+  else
+    {
+      fprintf(stream, ");\n");
+    }
+
+  /* Call system call enter hook function */
+
+  fprintf(stream, "\n  sched_note_syscall_enter(SYS_%s, %d",
+          g_parm[NAME_INDEX], nparms);
+
+  for (i = 0; i < nparms; i++)
+    {
+      /* Is the parameter a union member */
+
+      if (is_union(g_parm[PARM1_INDEX + i]))
+        {
+          /* Then we will have to pick a field name that can be cast to a
+           * uintptr_t.  There probably should be some error handling here<
+           * to catch the case where the fieldname was not supplied.
+           */
+
+          get_fieldname(g_parm[PARM1_INDEX + i], fieldname);
+          fprintf(stream, ", (uintptr_t)parm%d.%s", i + 1, fieldname);
+        }
+      else
+        {
+          fprintf(stream, ", (uintptr_t)parm%d", i + 1);
+        }
+    }
+
+  fprintf(stream, ");\n\n");
+
+  /* Then call the wrapped (real) function.  Functions that have no return
+   * value are a special case.
+   */
+
+  if (strcmp(g_parm[RETTYPE_INDEX], "void") == 0)
+    {
+      fprintf(stream, "  __real_%s(", g_parm[NAME_INDEX]);
+    }
+  else
+    {
+      fprintf(stream, "  result = __real_%s(", g_parm[NAME_INDEX]);
+    }
+
+  /* The pass all of the system call parameters */
+
+  for (i = 0; i < nparms; i++)
+    {
+      /* Treat the first argument in the list differently from the others..
+       * It does not need a comma before it.
+       */
+
+      if (i > 0)
+        {
+          fprintf(stream, ", ");
+        }
+
+      fprintf(stream, "parm%d", i + 1);
+    }
+
+  fprintf(stream, ");\n\n");
+
+  /* Call system call leave hook function */
+
+  fprintf(stream, "  sched_note_syscall_leave(SYS_%s, ", g_parm[NAME_INDEX]);
+
+  if (strcmp(g_parm[RETTYPE_INDEX], "void") == 0)
+    {
+      fprintf(stream, "0");
+    }
+  else
+    {
+      fprintf(stream, "(uintptr_t)result");
+    }
+
+  fprintf(stream, ");\n\n");
+
+  /* Tail end of the function.  If the wrapped (real) function has no return
+   * value, do nothing.
+   */
+
+  if (strcmp(g_parm[RETTYPE_INDEX], "void") == 0)
+    {
+      fprintf(stream, "}\n");
+    }
+  else
+    {
+      fprintf(stream, "  return result;\n}\n");
+    }
+
+  if (g_parm[COND_INDEX][0] != '\0')
+    {
+      fprintf(stream, "\n#endif /* %s */\n", g_parm[COND_INDEX]);
+    }
+
+  fclose(stream);
+}
+
+static void generate_syslist(void)
+{
+  static bool once = false;
+
+  /* Generate "up-front" information, include correct header files */
+
+  if (!once)
+    {
+      printf("/* Auto-generated syscall list file -- do not edit */\n\n");
+      printf("#include <nuttx/config.h>\n");
+      printf("#define __DIRECT_ERRNO_ACCESS\n");
+      once = true;
+    }
+
+  /* Generate a syscall name if the required conditions are met */
+
+  if (g_parm[COND_INDEX][0] != '\0')
+    {
+      printf("#if %s\n", g_parm[COND_INDEX]);
+    }
+
+  printf("%s\n", g_parm[NAME_INDEX]);
+
+  if (g_parm[COND_INDEX][0] != '\0')
+    {
+      printf("#endif /* %s */\n", g_parm[COND_INDEX]);
+    }
+}
+
 static void show_usage(const char *progname)
 {
   fprintf(stderr, "USAGE: %s [-p|s|i] <CSV file>\n\n", progname);
@@ -527,6 +886,8 @@ static void show_usage(const char *progname)
   fprintf(stderr, "\t-p : Generate proxies\n");
   fprintf(stderr, "\t-s : Generate stubs\n");
   fprintf(stderr, "\t-i : Generate proxies as static inline functions\n");
+  fprintf(stderr, "\t-w : Generate wrappers\n");
+  fprintf(stderr, "\t-l : Generate syscall list\n");
   fprintf(stderr, "\t-d : Enable debug output\n");
   exit(1);
 }
@@ -539,6 +900,8 @@ int main(int argc, char **argv, char **envp)
 {
   char *csvpath;
   bool proxies = false;
+  bool wrappers = false;
+  bool syslist = false;
   FILE *stream;
   char *ptr;
   int ch;
@@ -549,7 +912,7 @@ int main(int argc, char **argv, char **envp)
   g_debug = false;
   g_inline = false;
 
-  while ((ch = getopt(argc, argv, ":dps")) > 0)
+  while ((ch = getopt(argc, argv, ":dpsiwl")) > 0)
     {
       switch (ch)
         {
@@ -567,6 +930,14 @@ int main(int argc, char **argv, char **envp)
 
           case 'i' :
             g_inline = true;
+            break;
+
+          case 'w' :
+            wrappers = true;
+            break;
+
+          case 'l' :
+            syslist = true;
             break;
 
           case '?' :
@@ -660,6 +1031,14 @@ int main(int argc, char **argv, char **envp)
       if (proxies)
         {
           generate_proxy(nfixed, nargs - PARM1_INDEX);
+        }
+      else if (wrappers)
+        {
+          generate_wrapper(nfixed, nargs - PARM1_INDEX);
+        }
+      else if (syslist)
+        {
+          generate_syslist();
         }
       else
         {
